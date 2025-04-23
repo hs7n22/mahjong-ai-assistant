@@ -30,10 +30,10 @@ class _AuthPageState extends State<AuthPage> {
       if (!mounted) return; //检查是否还在树上
 
       log.info("✅ 登录成功：${response.user!.email}");
+
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text("登录成功")));
-
       //✅ 登录成功后跳转主页
       Navigator.pushReplacement(
         context,
@@ -54,7 +54,7 @@ class _AuthPageState extends State<AuthPage> {
 
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text("注册成功，请前往邮箱完成验证")));
+        ).showSnackBar(const SnackBar(content: Text("注册成功，请前往邮箱完整验证")));
 
         if (response.user?.emailChangeSentAt != null) {
           //✅ 注册成功并且已验证邮箱，跳转主页
