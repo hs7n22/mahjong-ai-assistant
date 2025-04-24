@@ -8,6 +8,7 @@ import 'auth_page.dart';
 // ignore: unused_import
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:frontend/config.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -41,10 +42,7 @@ class _HomePageState extends State<HomePage> {
 
     final token = Supabase.instance.client.auth.currentSession?.accessToken;
 
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('http://192.168.100.112:8000/upload'),
-    );
+    final request = http.MultipartRequest('POST', Uri.parse("$baseUrl/upload"));
 
     request.headers['Authorization'] = 'Bearer $token';
 
