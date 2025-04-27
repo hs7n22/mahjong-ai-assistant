@@ -61,7 +61,17 @@ class _HomePageState extends State<HomePage> {
       _uploadResult = '状态码: ${result.statusCode}\n返回值: ${result.body}';
     });
 
-    SnackbarHelper.showSuccess(context, "图片上传成功");
+    if (result.isSuccess) {
+      SnackbarHelper.show(context, "✅ 上传成功！");
+    } else if (result.statusCode == 403) {
+      SnackbarHelper.show(context, "⚠️ 今日上传次数已用完，请升级会员");
+    } else if (result.statusCode == 401) {
+      SnackbarHelper.show(context, "❗ 请先登录！");
+      //跳转至登录页面
+      Navigator.pushReplacementNamed(context, "/");
+    } else {
+      SnackbarHelper.show(context, "❌ 上传失败，请稍后重试！");
+    }
   }
 
   void _signOut() async {

@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from jose import jwt, JWSError
 from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime
 
 load_dotenv()
 
@@ -40,6 +41,45 @@ def get_current_user(request: Request):
         )
 
 
+# 模拟用户数据库
+user_upload_record = {}
+
+UPLOAD_LIMIT_PER_DAY = 3  # 普通用户每天最多上传3次
+
+
+def check_upload_permission(user_id):
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # 如果这个用户没有记录，初始化
+    if user_id not in user_upload_record:
+        user_upload_record[user_id] = {
+            "last_upload_date": today,
+            "upload_count": 0,
+            "is_vip": False,  # 默认非会员，后续可以通过设置会员
+        }
+    record = user_upload_record[user_id]
+
+    # 如果是新的一天，重制计数
+    if record["last_upload_date"] != today:
+        record["upload_count"] = 0
+        record["last_upload_date"] = today
+
+    # 如果是会员，永远允许上传
+    if record["is_vip"]:
+        return True
+
+    # 如果不是会员，检查今日上传次数
+    if record["upload_count"] < UPLOAD_LIMIT_PER_DAY:
+        return True
+    else:
+        return False
+
+
+def record_upload(user_id):
+    if user_id in user_upload_record:
+        user_upload_record[user_id]["upload_count"] += 1
+
+
 @app.get("/protected")
 def protected_route(user=Depends(get_current_user)):
     return {
@@ -52,12 +92,21 @@ def protected_route(user=Depends(get_current_user)):
 
 @app.post("/upload")
 def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
+    user_id = user["sub"]
+
+    if not check_upload_permission(user_id):
+        raise HTTPException(
+            status_code=403, detail="已超出今日上传次数，升级会员享受不限量上传。"
+        )
+
     save_dir = "uploads"
     os.makedirs(save_dir, exist_ok=True)
 
     file_location = os.path.join(save_dir, f"{user['sub']}_{file.filename}")
     with open(file_location, "wb") as f:
         f.write(file.file.read())
+
+    record_upload(user_id)
 
     return {
         "message": "上传成功!",
