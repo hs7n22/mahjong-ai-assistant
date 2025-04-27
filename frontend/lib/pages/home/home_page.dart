@@ -7,6 +7,7 @@ import 'package:frontend/services/upload_service.dart';
 import 'package:frontend/widgets/user_info_card.dart';
 import 'package:frontend/widgets/image_upload_box.dart';
 import 'package:frontend/widgets/snackbar_helper.dart';
+import 'package:frontend/services/upgrade_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -20,11 +21,13 @@ class _HomePageState extends State<HomePage> {
   String? _fileName;
   String _uploadResult = "";
   late final UploadService _uploadService;
+  late final UpgradeService _upgradeService;
 
   @override
   void initState() {
     super.initState();
     _uploadService = UploadService();
+    _upgradeService = UpgradeService();
   }
 
   void _pickImage() async {
@@ -61,7 +64,17 @@ class _HomePageState extends State<HomePage> {
       _uploadResult = '状态码: ${result.statusCode}\n返回值: ${result.body}';
     });
 
-    SnackbarHelper.showSuccess(context, "图片上传成功");
+    if (result.isSuccess) {
+      SnackbarHelper.show(context, "✅ 上传成功！");
+    } else if (result.statusCode == 403) {
+      SnackbarHelper.show(context, "⚠️ 今日上传次数已用完，请升级会员");
+    } else if (result.statusCode == 401) {
+      SnackbarHelper.show(context, "❗ 请先登录！");
+      //跳转至登录页面
+      Navigator.pushReplacementNamed(context, "/");
+    } else {
+      SnackbarHelper.show(context, "❌ 上传失败，请稍后重试！");
+    }
   }
 
   void _signOut() async {
@@ -69,6 +82,19 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     SnackbarHelper.showSuccess(context, "已退出登录");
     Navigator.pushReplacementNamed(context, "/");
+  }
+
+  Future<void> _upgradeToVip() async {
+    final success = await _upgradeService.upgradeToVip();
+
+    if (!mounted) return;
+
+    if (success) {
+      SnackbarHelper.show(context, "🎉 开通会员成功！");
+      //
+    } else {
+      SnackbarHelper.show(context, "❌ 开通会员失败，请稍后再试！");
+    }
   }
 
   @override
@@ -90,6 +116,10 @@ class _HomePageState extends State<HomePage> {
               onPickImage: _pickImage,
               onUpload: _uploadImage,
               resultText: _uploadResult,
+            ),
+            ElevatedButton(
+              onPressed: _upgradeToVip,
+              child: const Text("开通会员 🚀"),
             ),
           ],
         ),

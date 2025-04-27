@@ -4,32 +4,43 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AuthService {
   final log = Logger('AuthService');
+  final _clinet = Supabase.instance.client;
 
   Future<bool> signIn(String email, String password) async {
     try {
-      final response = await Supabase.instance.client.auth.signInWithPassword(
+      final response = await _clinet.auth.signInWithPassword(
         email: email,
         password: password,
       );
       log.info("✅ 登录成功：${response.user?.email}");
-      return true;
+      return response.user != null;
+    } on AuthException catch (e) {
+      log.warning("❌ 登录失败（密码错误或用户不存在）：$e");
+      throw AuthException("登录失败");
     } catch (e) {
-      log.warning("⚠️ 登录失败：$e");
-      return false;
+      log.severe("❌ 登录未知错误：$e");
+      throw Exception("未知错误：$e");
     }
   }
 
   Future<bool> signUp(String email, String password) async {
     try {
-      final response = await Supabase.instance.client.auth.signUp(
+      final response = await _clinet.auth.signUp(
         email: email,
         password: password,
       );
-      log.info("✅ 注册成功：${response.user?.email}");
-      return true;
+      if (response.user != null) {
+        log.info(
+          "✉️ 尝试注册：${response.user?.email}。若收到验证邮件请完成验证，若无则可能邮箱已注册，请检查密码。",
+        );
+        return true;
+      } else {
+        log.warning("⚠️ 注册返回无 user");
+        return false;
+      }
     } catch (e) {
-      log.severe("❌ 注册失败：$e");
-      return false;
+      log.severe("❌ 注册异常：$e");
+      throw Exception("注册异常：$e");
     }
   }
 
@@ -40,14 +51,19 @@ class AuthService {
 
   Future<bool> refreshUserSession() async {
     try {
-      final response = await Supabase.instance.client.auth.refreshSession();
-      return response.user?.emailConfirmedAt != null;
+      final response = await _clinet.auth.refreshSession();
+      final refreshedUser = response.user;
+      if (refreshedUser != null && refreshedUser.emailConfirmedAt != null) {
+        return true;
+      }
+      return false;
     } catch (e) {
+      log.severe("❌ 刷新失败：$e");
       return false;
     }
   }
 
   Future<void> signOut() async {
-    await Supabase.instance.client.auth.signOut();
+    await _clinet.auth.signOut();
   }
 }
