@@ -4,6 +4,7 @@ import 'package:frontend/services/auth_service.dart';
 import 'package:frontend/pages/home/home_page.dart';
 import 'package:frontend/widgets/auth_form.dart';
 import 'package:frontend/widgets/snackbar_helper.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
@@ -16,32 +17,37 @@ class _AuthPageState extends State<AuthPage> {
   final AuthService _authService = AuthService();
 
   Future<void> _signInOrSignUp(String email, String password) async {
-    final loginSuccess = await _authService.signIn(email, password);
-    if (loginSuccess) {
-      if (!mounted) return;
-      SnackbarHelper.show(context, "登录成功，欢迎用户：$email");
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const HomePage()),
-      );
-    } else {
-      final signUpSuccess = await _authService.signUp(email, password);
-      if (!mounted) return;
-
-      if (signUpSuccess) {
-        final verified = await _authService.isEmailVerified();
-        if (verified) {
-          SnackbarHelper.show(context, "注册成功，欢迎用户: $email");
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const HomePage()),
-          );
-        } else {
-          SnackbarHelper.show(context, "请前往邮箱完成验证后再登录");
-        }
-      } else {
-        SnackbarHelper.showError(context, "注册失败，请稍后重试");
+    try {
+      final loginSuccess = await _authService.signIn(email, password);
+      if (loginSuccess) {
+        if (!mounted) return;
+        SnackbarHelper.show(context, "登录成功，欢迎用户：$email");
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const HomePage()),
+        );
       }
+    } on AuthException {
+      //登录失败后尝试注册
+      try {
+        final signUpSuccess = await _authService.signUp(email, password);
+        if (!mounted) return;
+
+        if (signUpSuccess) {
+          if (signUpSuccess) {
+            SnackbarHelper.show(
+              context,
+              "登录失败，我们已为您尝试注册新账户。\n"
+              "如果您收到验证邮件，请点击验证后继续使用。\n"
+              "如果没有收到，请检查邮箱是否已注册并输入正确密码。",
+            );
+          }
+        }
+      } catch (e) {
+        SnackbarHelper.show(context, "注册失败，请稍后重试。");
+      }
+    } catch (e) {
+      SnackbarHelper.show(context, "未知错误：$e");
     }
   }
 
@@ -56,7 +62,7 @@ class _AuthPageState extends State<AuthPage> {
         MaterialPageRoute(builder: (_) => const HomePage()),
       );
     } else {
-      SnackbarHelper.show(context, "邮箱未验证，请完成验证后再试");
+      SnackbarHelper.show(context, "邮箱未验证或无效会话");
     }
   }
 
