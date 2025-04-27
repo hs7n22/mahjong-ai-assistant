@@ -113,3 +113,20 @@ def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
         "saved_as": file_location,
         "uploaded_by": user.get("email"),
     }
+
+
+@app.post("/upgrade")
+def upgrade_to_vip(user=Depends(get_current_user)):
+    user_id = user["sub"]
+
+    if user_id not in user_upload_record:
+        # 初始化用户记录
+        today = datetime.now().strftime("%Y-%m-%d")
+        user_upload_record[user_id] = {
+            "last_upload_date": today,
+            "upload_count": 0,
+            "is_vip": False,
+        }
+    user_upload_record[user_id]["is_vip"] = True
+
+    return {"message": "开通会员成功"}

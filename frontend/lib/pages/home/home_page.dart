@@ -7,6 +7,7 @@ import 'package:frontend/services/upload_service.dart';
 import 'package:frontend/widgets/user_info_card.dart';
 import 'package:frontend/widgets/image_upload_box.dart';
 import 'package:frontend/widgets/snackbar_helper.dart';
+import 'package:frontend/services/upgrade_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -20,11 +21,13 @@ class _HomePageState extends State<HomePage> {
   String? _fileName;
   String _uploadResult = "";
   late final UploadService _uploadService;
+  late final UpgradeService _upgradeService;
 
   @override
   void initState() {
     super.initState();
     _uploadService = UploadService();
+    _upgradeService = UpgradeService();
   }
 
   void _pickImage() async {
@@ -81,6 +84,19 @@ class _HomePageState extends State<HomePage> {
     Navigator.pushReplacementNamed(context, "/");
   }
 
+  Future<void> _upgradeToVip() async {
+    final success = await _upgradeService.upgradeToVip();
+
+    if (!mounted) return;
+
+    if (success) {
+      SnackbarHelper.show(context, "🎉 开通会员成功！");
+      //
+    } else {
+      SnackbarHelper.show(context, "❌ 开通会员失败，请稍后再试！");
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser;
@@ -100,6 +116,10 @@ class _HomePageState extends State<HomePage> {
               onPickImage: _pickImage,
               onUpload: _uploadImage,
               resultText: _uploadResult,
+            ),
+            ElevatedButton(
+              onPressed: _upgradeToVip,
+              child: const Text("开通会员 🚀"),
             ),
           ],
         ),
