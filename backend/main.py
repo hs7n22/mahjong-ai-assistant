@@ -4,6 +4,11 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, 
 from jose import jwt, JWSError
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
+from tiles_infer import predict_hand_tiles
+from tile_classifier import find_all_combinations_filtered
+from models.llm_utils import call_llm_api, build_prompt, clean_response
+from tile_utils import organize_tiles, normalize_tiles_to_chinese
+from tiles_waiting import get_waiting_tiles
 
 load_dotenv()
 
@@ -108,10 +113,32 @@ def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
 
     record_upload(user_id)
 
+    # 1.识别原始牌型
+    raw_hand_tiles = predict_hand_tiles(file_location)
+    hand_tiles = normalize_tiles_to_chinese(raw_hand_tiles)
+
+    # 2.分类
+    grouped = organize_tiles(hand_tiles)
+    sorted_tiles = grouped["万"] + grouped["筒"] + grouped["条"] + grouped["字"]
+    # 3.排列组合
+    combinations = find_all_combinations_filtered(sorted_tiles)
+
+    # 4.判断是否胡牌，可以听哪些牌
+    waiting_tiles = get_waiting_tiles(sorted_tiles)
+    is_ting = bool(waiting_tiles)
+
+    # 3.构造LLM Prompt
+    prompt = build_prompt(hand_tiles, grouped, combinations, waiting_tiles)
+    raw_suggestion = call_llm_api(prompt)
+    suggestion = clean_response(raw_suggestion)
+
+    # 4.返回结构化数据
     return {
-        "message": "上传成功!",
-        "saved_as": file_location,
-        "uploaded_by": user.get("email"),
+        "detected_tiles": raw_hand_tiles,
+        "classified": sorted_tiles,
+        "combinations": combinations,
+        "is_ting": is_ting,
+        "suggestion": suggestion,
     }
 
 
