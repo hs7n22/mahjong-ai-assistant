@@ -11,7 +11,7 @@ def find_all_combinations_filtered(
     tiles: List[str],
     min_used_tiles: int = 9,
     max_guzhang: int = 3,
-    min_structures: int = 1,
+    min_structures: int = 1,  # 新增： 控制是否强约束为 4面+1将
 ) -> List[Dict[str, List]]:
     all_combinations = []
 
@@ -72,4 +72,5 @@ def find_all_combinations_filtered(
         dfs(new_remain, shunzi, kezi, duizi, guz + [tile])
 
     dfs(tiles, [], [], [], [])
+
     return deduplicate_combinations(all_combinations)

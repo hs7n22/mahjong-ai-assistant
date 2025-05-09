@@ -8,7 +8,7 @@ from tiles_infer import predict_hand_tiles
 from tile_classifier import find_all_combinations_filtered
 from models.llm_utils import call_llm_api, build_prompt, clean_response
 from tile_utils import organize_tiles, normalize_tiles_to_chinese
-from tiles_waiting import get_waiting_tiles
+from tiles_waiting import get_waiting_tiles, get_gang_tiles, get_peng_tiles
 
 load_dotenv()
 
@@ -120,15 +120,35 @@ def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
     # 2.分类
     grouped = organize_tiles(hand_tiles)
     sorted_tiles = grouped["万"] + grouped["筒"] + grouped["条"] + grouped["字"]
-    # 3.排列组合
-    combinations = find_all_combinations_filtered(sorted_tiles)
+    # 3.检查是否有杠和潜在的碰
+    gang_tiles, trimmed_tiles = get_gang_tiles(sorted_tiles)
+    peng_candidates = get_peng_tiles(trimmed_tiles)
 
-    # 4.判断是否胡牌，可以听哪些牌
-    waiting_tiles = get_waiting_tiles(sorted_tiles)
+    # 4.判断是否胡牌
+    waiting_tiles = get_waiting_tiles(trimmed_tiles)
+
+    # 5通过是否听牌来判断动态调整排列组合的策略
     is_ting = bool(waiting_tiles)
+    if is_ting:
+        print("已进入听牌阶段，使用严格组合模式（strict=True）")
+        combinations = find_all_combinations_filtered(
+            trimmed_tiles, max_guzhang=2, min_used_tiles=10
+        )
+    else:
+        print("处于开局/非听牌阶段，使用宽松组合模式（strict=False）")
+        combinations = find_all_combinations_filtered(
+            trimmed_tiles, max_guzhang=4, min_used_tiles=7
+        )
 
     # 3.构造LLM Prompt
-    prompt = build_prompt(hand_tiles, grouped, combinations, waiting_tiles)
+    prompt = build_prompt(
+        trimmed_tiles,
+        grouped,
+        combinations,
+        waiting_tiles,
+        gang_tiles,
+        peng_candidates,
+    )
     raw_suggestion = call_llm_api(prompt)
     suggestion = clean_response(raw_suggestion)
 
@@ -136,6 +156,8 @@ def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
     return {
         "detected_tiles": raw_hand_tiles,
         "classified": sorted_tiles,
+        "gangpai": gang_tiles,
+        "peng_candidates": peng_candidates,
         "combinations": combinations,
         "is_ting": is_ting,
         "suggestion": suggestion,
