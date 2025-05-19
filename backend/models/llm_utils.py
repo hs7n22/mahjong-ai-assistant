@@ -1,7 +1,10 @@
+import json
 import requests
 import os
 import re
 from dotenv import load_dotenv
+from typing import List, Dict
+from models.message import Message
 
 load_dotenv()
 
@@ -89,6 +92,33 @@ def build_prompt(
     """
 
 
+def build_prompt_from_messages(
+    messages: List[Message], current_tiles: List[str]
+) -> List[Dict[str, str]]:
+    # 初始化 prompt 结构
+    chat_prompt = [
+        {
+            "role": "system",
+            "content": (
+                "你是一名经验丰富的麻将指导专家。"
+                "请用简洁简明的语言帮助用户理解当前的出来建议或解释他们的疑问，避免使用专业术语。"
+                "请根据用户提供的上下文、牌面信息、出牌建议等，给出准确但简洁的回复。"
+            ),
+        }
+    ]
+    # 拼接当前有效手牌
+    tile_summary = f"当前玩家的有效手牌为:{','.join(current_tiles)}。"
+
+    # 将手牌信息插入为新的user消息
+    chat_prompt.append({"role": "user", "content": tile_summary})
+
+    # 拼接已有对话
+    for msg in messages:
+        chat_prompt.append({"role": msg.role, "content": msg.content})
+
+    return chat_prompt
+
+
 def clean_response(text: str) -> str:
     text = re.sub(r"\*\*", "", text)
     text = text.replace("\\n", "\n").replace("\n", "")
@@ -96,12 +126,23 @@ def clean_response(text: str) -> str:
     return text.strip()
 
 
-def call_llm_api(prompt: str) -> str:
+def call_llm_api(prompt: str = None, messages: List[Dict[str, str]] = None) -> str:
     url = "https://api.siliconflow.cn/v1/chat/completions"
     api_key = os.getenv("SILICONFLOW_API_KEY")
 
     if not api_key:
         raise ValueError("API 密钥未设置，请问子.env中设置SILICONFLOW_API_KEY")
+
+    if messages is None and prompt is not None:
+        messages = [
+            {
+                "role": "system",
+                "content": "你是一名资深的麻将指导专家，请针对普通玩家提供清晰的出牌建议。",
+            },
+            {"role": "user", "content": prompt},
+        ]
+    elif messages is None:
+        raise ValueError("必须提供prompt或者messages 之一")
 
     headers = {
         "Authorization": "Bearer sk-ecoxfnqfuttlpjadebylmlgxcvjrgeunjgaalalzyrjnlzdk",
@@ -109,13 +150,7 @@ def call_llm_api(prompt: str) -> str:
     }
     payload = {
         "model": "Qwen/QwQ-32B",
-        "messages": [
-            {
-                "role": "system",
-                "content": "你是一名资深的麻将指导专家，请针对普通玩家提供清晰的出牌建议，避免使用专业术语和多余废话。",
-            },
-            {"role": "user", "content": prompt},
-        ],
+        "messages": messages,  # 改为直接使用外部传入的多轮消息
         "stream": False,
         "max_tokens": 512,
         "enable_thinking": False,
@@ -129,6 +164,8 @@ def call_llm_api(prompt: str) -> str:
         "n": 1,
         "response_format": {"type": "text"},
     }
+
+    print("Payload:", json.dumps(payload, ensure_ascii=False, indent=2))
 
     try:
         response = requests.post(url, headers=headers, json=payload)

@@ -1,7 +1,6 @@
 import os
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
-from jose import jwt, JWSError
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from tiles_infer import predict_hand_tiles
@@ -9,10 +8,16 @@ from tile_classifier import find_all_combinations_filtered
 from models.llm_utils import call_llm_api, build_prompt, clean_response
 from tile_utils import organize_tiles, normalize_tiles_to_chinese
 from tiles_waiting import get_waiting_tiles, get_gang_tiles, get_peng_tiles
+from routes import chat
+from models.message import Message, Metadata
+from state import chat_sessions
+from utils.auth import get_current_user
+import time
 
 load_dotenv()
 
 app = FastAPI()
+app.include_router(chat.router, tags=["Chat"])
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,24 +31,24 @@ SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 SUPABASE_PROJECT_ID = os.getenv("SUPABASE_PROJECT_ID")
 
 
-def get_current_user(request: Request):
-    auth = request.headers.get("Authorization")
-    if not auth or not auth.startswith("Bearer"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token"
-        )
+# def get_current_user(request: Request):
+#     auth = request.headers.get("Authorization")
+#     if not auth or not auth.startswith("Bearer"):
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token"
+#         )
 
-    token = auth.split(" ")[1]
+#     token = auth.split(" ")[1]
 
-    try:
-        payload = jwt.decode(
-            token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated"
-        )
-        return payload  # 可提取email，sub，role等字段
-    except JWSError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
-        )
+#     try:
+#         payload = jwt.decode(
+#             token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated"
+#         )
+#         return payload  # 可提取email，sub，role等字段
+#     except JWSError:
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
+#         )
 
 
 # 模拟用户数据库
@@ -127,7 +132,7 @@ def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
     # 4.判断是否胡牌
     waiting_tiles = get_waiting_tiles(trimmed_tiles)
 
-    # 5通过是否听牌来判断动态调整排列组合的策略
+    # 5通过是否听牌来判断动态调整排列组合
     is_ting = bool(waiting_tiles)
     if is_ting:
         print("已进入听牌阶段，使用严格组合模式（strict=True）")
@@ -140,7 +145,7 @@ def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
             trimmed_tiles, max_guzhang=4, min_used_tiles=7
         )
 
-    # 3.构造LLM Prompt
+    # 6.构造LLM Prompt
     prompt = build_prompt(
         trimmed_tiles,
         grouped,
@@ -149,10 +154,30 @@ def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
         gang_tiles,
         peng_candidates,
     )
-    raw_suggestion = call_llm_api(prompt)
+    raw_suggestion = call_llm_api(prompt=prompt)
     suggestion = clean_response(raw_suggestion)
 
-    # 4.返回结构化数据
+    # 7.初始化对话会话记录
+    session_id = f"{user_id}-upload"
+    print("✅ 后端生成的 session_id:", session_id)
+    user_msg = Message(
+        role="user",
+        type="text",
+        content="请根据我的上传图片给出出牌建议",
+        timestamp=int(time.time() * 1000),
+    )
+    assistant_msg = Message(
+        role="assistant",
+        type="text",
+        content=suggestion,
+        metadata=Metadata(
+            hand_tiles=trimmed_tiles,
+        ),
+        timestamp=int(time.time() * 1000),
+    )
+    chat_sessions[session_id] = [user_msg, assistant_msg]
+
+    # 8.返回结构化数据
     return {
         "detected_tiles": raw_hand_tiles,
         "classified": sorted_tiles,
@@ -161,6 +186,8 @@ def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
         "combinations": combinations,
         "is_ting": is_ting,
         "suggestion": suggestion,
+        "session_id": session_id,
+        "chat_sessions": chat_sessions,  # 方便前端跳转用
     }
 
 
