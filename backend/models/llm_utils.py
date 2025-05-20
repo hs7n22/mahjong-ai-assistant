@@ -126,6 +126,9 @@ def clean_response(text: str) -> str:
     return text.strip()
 
 
+# ⚠️ siliconflow.cn 的 Qwen/QwQ-32B 模型不再支持 enable_thinking 参数
+# 更新时间：2025-05-20，参考错误码 20015
+# 所以该参数已被移除
 def call_llm_api(prompt: str = None, messages: List[Dict[str, str]] = None) -> str:
     url = "https://api.siliconflow.cn/v1/chat/completions"
     api_key = os.getenv("SILICONFLOW_API_KEY")
@@ -153,7 +156,7 @@ def call_llm_api(prompt: str = None, messages: List[Dict[str, str]] = None) -> s
         "messages": messages,  # 改为直接使用外部传入的多轮消息
         "stream": False,
         "max_tokens": 512,
-        "enable_thinking": False,
+        # "enable_thinking": False,
         "thinking_budget": 512,
         "min_p": 0.1,
         "stop": None,
@@ -172,4 +175,6 @@ def call_llm_api(prompt: str = None, messages: List[Dict[str, str]] = None) -> s
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
+        print("✅ 状态码:", response.status_code)
+        print("❌ 错误详情:", response.text)
         return f"调用LLM失败: {str(e)}"

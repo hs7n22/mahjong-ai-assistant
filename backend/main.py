@@ -1,24 +1,39 @@
 import os
+import time
+from datetime import datetime
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime
+from contextlib import asynccontextmanager
+
 from tiles_infer import predict_hand_tiles
 from tile_classifier import find_all_combinations_filtered
-from models.llm_utils import call_llm_api, build_prompt, clean_response
 from tile_utils import organize_tiles, normalize_tiles_to_chinese
 from tiles_waiting import get_waiting_tiles, get_gang_tiles, get_peng_tiles
-from routes import chat
+from models.llm_utils import call_llm_api, build_prompt, clean_response
 from models.message import Message, Metadata
 from state import chat_sessions
+from routes import chat
 from utils.auth import get_current_user
-import time
+from supabase import create_async_client, Client
 
 load_dotenv()
 
-app = FastAPI()
-app.include_router(chat.router, tags=["Chat"])
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase: Client
+UPLOAD_LIMIT_PER_DAY = 3
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global supabase
+    supabase = await create_async_client(SUPABASE_URL, SUPABASE_KEY)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+app.include_router(chat.router, tags=["Chat"])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,67 +42,61 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
-SUPABASE_PROJECT_ID = os.getenv("SUPABASE_PROJECT_ID")
 
-
-# def get_current_user(request: Request):
-#     auth = request.headers.get("Authorization")
-#     if not auth or not auth.startswith("Bearer"):
-#         raise HTTPException(
-#             status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token"
-#         )
-
-#     token = auth.split(" ")[1]
-
-#     try:
-#         payload = jwt.decode(
-#             token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated"
-#         )
-#         return payload  # 可提取email，sub，role等字段
-#     except JWSError:
-#         raise HTTPException(
-#             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
-#         )
-
-
-# 模拟用户数据库
-user_upload_record = {}
-
-UPLOAD_LIMIT_PER_DAY = 3  # 普通用户每天最多上传3次
-
-
-def check_upload_permission(user_id):
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    # 如果这个用户没有记录，初始化
-    if user_id not in user_upload_record:
-        user_upload_record[user_id] = {
-            "last_upload_date": today,
-            "upload_count": 0,
-            "is_vip": False,  # 默认非会员，后续可以通过设置会员
-        }
-    record = user_upload_record[user_id]
-
-    # 如果是新的一天，重制计数
-    if record["last_upload_date"] != today:
-        record["upload_count"] = 0
-        record["last_upload_date"] = today
-
-    # 如果是会员，永远允许上传
-    if record["is_vip"]:
+async def check_upload_permission(user_id: str) -> bool:
+    today = datetime.now().date()
+    response = await supabase.table("profiles").select("*").eq("id", user_id).execute()
+    if not response.data:
+        await (
+            supabase.table("profiles")
+            .insert(
+                {
+                    "id": user_id,
+                    "is_vip": False,
+                    "upload_count": 0,
+                    "last_upload_date": today.isoformat(),
+                }
+            )
+            .execute()
+        )
         return True
 
-    # 如果不是会员，检查今日上传次数
-    if record["upload_count"] < UPLOAD_LIMIT_PER_DAY:
+    profile = response.data[0]
+    if profile["last_upload_date"] != today.isoformat():
+        await (
+            supabase.table("profiles")
+            .update(
+                {
+                    "upload_count": 0,
+                    "last_upload_date": today.isoformat(),
+                }
+            )
+            .eq("id", user_id)
+            .execute()
+        )
         return True
-    else:
-        return False
+
+    if profile["is_vip"]:
+        return True
+
+    return profile["upload_count"] < UPLOAD_LIMIT_PER_DAY
 
 
-def record_upload(user_id):
-    if user_id in user_upload_record:
-        user_upload_record[user_id]["upload_count"] += 1
+async def record_upload(user_id: str):
+    response = (
+        await supabase.table("profiles")
+        .select("upload_count")
+        .eq("id", user_id)
+        .execute()
+    )
+    profile = response.data[0]
+    new_count = profile["upload_count"] + 1
+    await (
+        supabase.table("profiles")
+        .update({"upload_count": new_count})
+        .eq("id", user_id)
+        .execute()
+    )
 
 
 @app.get("/protected")
@@ -101,63 +110,43 @@ def protected_route(user=Depends(get_current_user)):
 
 
 @app.post("/upload")
-def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
+async def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
     user_id = user["sub"]
 
-    if not check_upload_permission(user_id):
+    if not await check_upload_permission(user_id):
         raise HTTPException(
             status_code=403, detail="已超出今日上传次数，升级会员享受不限量上传。"
         )
 
     save_dir = "uploads"
     os.makedirs(save_dir, exist_ok=True)
-
-    file_location = os.path.join(save_dir, f"{user['sub']}_{file.filename}")
+    file_location = os.path.join(save_dir, f"{user_id}_{file.filename}")
     with open(file_location, "wb") as f:
         f.write(file.file.read())
 
-    record_upload(user_id)
+    await record_upload(user_id)
 
-    # 1.识别原始牌型
     raw_hand_tiles = predict_hand_tiles(file_location)
     hand_tiles = normalize_tiles_to_chinese(raw_hand_tiles)
-
-    # 2.分类
     grouped = organize_tiles(hand_tiles)
     sorted_tiles = grouped["万"] + grouped["筒"] + grouped["条"] + grouped["字"]
-    # 3.检查是否有杠和潜在的碰
     gang_tiles, trimmed_tiles = get_gang_tiles(sorted_tiles)
     peng_candidates = get_peng_tiles(trimmed_tiles)
-
-    # 4.判断是否胡牌
     waiting_tiles = get_waiting_tiles(trimmed_tiles)
 
-    # 5通过是否听牌来判断动态调整排列组合
     is_ting = bool(waiting_tiles)
-    if is_ting:
-        print("已进入听牌阶段，使用严格组合模式（strict=True）")
-        combinations = find_all_combinations_filtered(
-            trimmed_tiles, max_guzhang=2, min_used_tiles=10
-        )
-    else:
-        print("处于开局/非听牌阶段，使用宽松组合模式（strict=False）")
-        combinations = find_all_combinations_filtered(
-            trimmed_tiles, max_guzhang=4, min_used_tiles=7
-        )
-
-    # 6.构造LLM Prompt
-    prompt = build_prompt(
+    combinations = find_all_combinations_filtered(
         trimmed_tiles,
-        grouped,
-        combinations,
-        waiting_tiles,
-        gang_tiles,
-        peng_candidates,
+        max_guzhang=2 if is_ting else 4,
+        min_used_tiles=10 if is_ting else 7,
+    )
+
+    prompt = build_prompt(
+        trimmed_tiles, grouped, combinations, waiting_tiles, gang_tiles, peng_candidates
     )
     raw_suggestion = call_llm_api(prompt=prompt)
     suggestion = clean_response(raw_suggestion)
 
-    # 7.初始化对话会话记录
     session_id = f"{user_id}-upload"
     print("✅ 后端生成的 session_id:", session_id)
     user_msg = Message(
@@ -170,14 +159,11 @@ def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
         role="assistant",
         type="text",
         content=suggestion,
-        metadata=Metadata(
-            hand_tiles=trimmed_tiles,
-        ),
+        metadata=Metadata(hand_tiles=trimmed_tiles),
         timestamp=int(time.time() * 1000),
     )
     chat_sessions[session_id] = [user_msg, assistant_msg]
 
-    # 8.返回结构化数据
     return {
         "detected_tiles": raw_hand_tiles,
         "classified": sorted_tiles,
@@ -187,22 +173,14 @@ def upload_file(user=Depends(get_current_user), file: UploadFile = File(...)):
         "is_ting": is_ting,
         "suggestion": suggestion,
         "session_id": session_id,
-        "chat_sessions": chat_sessions,  # 方便前端跳转用
+        "chat_sessions": chat_sessions,
     }
 
 
 @app.post("/upgrade")
-def upgrade_to_vip(user=Depends(get_current_user)):
+async def upgrade_to_vip(user=Depends(get_current_user)):
     user_id = user["sub"]
-
-    if user_id not in user_upload_record:
-        # 初始化用户记录
-        today = datetime.now().strftime("%Y-%m-%d")
-        user_upload_record[user_id] = {
-            "last_upload_date": today,
-            "upload_count": 0,
-            "is_vip": False,
-        }
-    user_upload_record[user_id]["is_vip"] = True
-
-    return {"message": "开通会员成功"}
+    await (
+        supabase.table("profiles").update({"is_vip": True}).eq("id", user_id).execute()
+    )
+    return {"message": "🎉 开通会员成功！"}
