@@ -6,6 +6,8 @@ import 'pages/auth/auth_page.dart';
 import 'pages/home/home_page.dart';
 import 'pages/chat/chat_page.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
+import 'pages/payment/payment_success_page.dart';
+import 'pages/payment/payment_cancel_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,6 +46,12 @@ class MyApp extends StatelessWidget {
           return MaterialPageRoute(
             builder: (_) => ChatPage(sessionId: sessionId),
           );
+        }
+        if (settings.name == '/payment-cancel') {
+          return MaterialPageRoute(builder: (_) => const PaymentCancelPage());
+        }
+        if (settings.name == '/payment-success') {
+          return MaterialPageRoute(builder: (_) => PaymentSuccessPage());
         }
         return MaterialPageRoute(
           builder: (_) => const Scaffold(body: Center(child: Text('页面不存在'))),

@@ -4,8 +4,6 @@ from datetime import datetime
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-
 from tiles_infer import predict_hand_tiles
 from tile_classifier import find_all_combinations_filtered
 from tile_utils import organize_tiles, normalize_tiles_to_chinese
@@ -15,25 +13,17 @@ from models.message import Message, Metadata
 from state import chat_sessions
 from routes import chat
 from utils.auth import get_current_user
-from supabase import create_async_client, Client
+from routes import payment
+from utils.supabase_client import get_supabase
 
 load_dotenv()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client
+
 UPLOAD_LIMIT_PER_DAY = 3
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global supabase
-    supabase = await create_async_client(SUPABASE_URL, SUPABASE_KEY)
-    yield
-
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 app.include_router(chat.router, tags=["Chat"])
+app.include_router(payment.router, tags=["支付"])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -45,6 +35,7 @@ app.add_middleware(
 
 async def check_upload_permission(user_id: str) -> bool:
     today = datetime.now().date()
+    supabase = await get_supabase()
     response = await supabase.table("profiles").select("*").eq("id", user_id).execute()
     if not response.data:
         await (
@@ -83,6 +74,7 @@ async def check_upload_permission(user_id: str) -> bool:
 
 
 async def record_upload(user_id: str):
+    supabase = await get_supabase()
     response = (
         await supabase.table("profiles")
         .select("upload_count")
@@ -179,6 +171,7 @@ async def upload_file(user=Depends(get_current_user), file: UploadFile = File(..
 
 @app.post("/upgrade")
 async def upgrade_to_vip(user=Depends(get_current_user)):
+    supabase = await get_supabase()
     user_id = user["sub"]
     await (
         supabase.table("profiles").update({"is_vip": True}).eq("id", user_id).execute()
