@@ -114,7 +114,7 @@
 
 #     dfs(tiles, [], [], [], [])
 #     return deduplicate_combinations(all_combinations)
-from tiles_waiting import get_waiting_tiles
+from backend.logic.tiles_waiting import get_waiting_tiles
 
 test_hand = [
     "9万",

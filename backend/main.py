@@ -7,7 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from tiles_infer import predict_hand_tiles
 from tile_classifier import find_all_combinations_filtered
 from tile_utils import organize_tiles, normalize_tiles_to_chinese
-from tiles_waiting import get_waiting_tiles, get_gang_tiles, get_peng_tiles
+from logic.tiles_waiting import (
+    get_waiting_tiles,
+    get_gang_tiles,
+    get_peng_tiles,
+)
 from models.llm_utils import call_llm_api, build_prompt, clean_response
 from models.message import Message, Metadata
 from state import chat_sessions
